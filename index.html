@@ -294,7 +294,7 @@
     </div>
 
     <div class="card" style="border-color: #fca5a5; background: #fef2f2; text-align: center; margin-top: 2rem;">
-      <h3 style="margin-top:0; color: var(--danger);">Reset Application</h3>
+      <h3 style="margin-top:0; color: #danger;">Reset Application</h3>
       <p style="font-size: 0.9rem; color: #991b1b; margin-bottom: 1.5rem;">This will permanently delete <strong>ALL experiments and data</strong> from your browser.</p>
       <button id="resetDataBtn" class="danger-btn"><i class="ti ti-trash"></i> Wipe All Application Data</button>
     </div>
@@ -540,9 +540,6 @@ document.getElementById('resetDataBtn').addEventListener('click', () => {
     location.reload(); 
   }
 });
-
-// Load state immediately on boot
-loadState();
 
 
 // --- UI TAB LOGIC ---
@@ -823,38 +820,4 @@ document.getElementById('exportBtn').addEventListener('click', () => {
           sumBw += r.bw;
           sumFi += Math.max(feedOfferedForGroupWeek(r.group, r.week) - r.rfi, 0);
         });
-        const avgBw = sumBw / recordsThisWeek.length;
-        const avgFi = sumFi / recordsThisWeek.length;
-        const gain = avgBw - (prevAvgBw[t] || 0);
-        const fcr = gain > 0 ? (avgFi / gain) : null;
-        summaryRows.push({
-          Treatment: 'T'+t,
-          Week: w,
-          'Avg Body Weight (g)': avgBw.toFixed(1),
-          'Avg Feed Intake (g)': avgFi.toFixed(1),
-          'Avg Weight Gain (g)': gain.toFixed(1),
-          FCR: fcr ? fcr.toFixed(2) : 'NA'
-        });
-        prevAvgBw[t] = avgBw;
-      }
-    }
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Treatment Summary');
-  }
-
-  // Format filename to remove spaces and match experiment name
-  const safeName = currentExpName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
-  XLSX.writeFile(wb, `Avianlytics_${safeName}_data.xlsx`);
-});
-
-</script>
-<script>
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('Service Worker registered successfully!'))
-        .catch(err => console.log('Service Worker failed to register.', err));
-    });
-  }
-</script>
-</body>
-</html>
+        const avgBw = sum
