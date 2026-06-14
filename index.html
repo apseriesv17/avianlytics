@@ -153,6 +153,157 @@
   }
   
   // (Include previous switchTab, exportBtn, ANOVA logic here)
+  // --- UI TAB LOGIC ---
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+  document.querySelector(`button[onclick="switchTab('${tabId}')"]`).classList.add('active');
+  document.getElementById(tabId).classList.add('active');
+  if(tabId === 'dashboard') refresh();
+}
+
+// --- ANOVA LOGIC ---
+document.getElementById('runAnovaBtn').addEventListener('click', () => {
+  if(!mappingValid()) return alert("Ensure Trial Setup mapping is valid.");
+  
+  const param = document.getElementById('anovaParam').value;
+  const period = document.getElementById('anovaPeriod').value;
+  
+  let startW = 1, endW = NUM_WEEKS;
+  if(period.startsWith('w')) { startW = endW = Number(period.replace('w','')); }
+  else if(period === 'pre') { startW = 1; endW = 2; }
+  else if(period === 'star') { startW = 3; endW = 4; }
+  else if(period === 'fin') { startW = 5; endW = 6; }
+  
+  const groupsData = []; 
+  for(let t=1; t<=NUM_TREATMENTS; t++) groupsData.push([]);
+
+  for(let g=1; g<=NUM_GROUPS; g++) {
+    const t = treatmentOf(g);
+    let repFi = 0, startBw = 0, endBw = 0;
+    
+    for(let w=startW; w<=endW; w++){
+      const rec = weeklyRecords.find(r => r.group === g && r.week === w);
+      if(rec) {
+        repFi += Math.max(feedOfferedForGroupWeek(g, w) - rec.rfi, 0);
+        endBw = rec.bw; 
+      }
+      if(w === startW && startW > 1) {
+        const prevRec = weeklyRecords.find(r => r.group === g && r.week === (startW - 1));
+        if(prevRec) startBw = prevRec.bw;
+      }
+    }
+    
+    let val = null;
+    if(param === 'bw' && endBw > 0) val = endBw;
+    if(param === 'fi' && repFi > 0) val = repFi;
+    if(param === 'fcr' && endBw > startBw) val = repFi / (endBw - startBw);
+
+    if(val !== null) groupsData[t-1].push(val);
+  }
+
+  const validGroups = groupsData.filter(g => g.length > 0);
+  if(validGroups.length < 2) return alert("Not enough data points to run ANOVA across treatments for this period.");
+
+  let totalN = 0, grandSum = 0;
+  validGroups.forEach(g => { totalN += g.length; grandSum += jStat.sum(g); });
+  const grandMean = grandSum / totalN;
+
+  let ssBetween = 0, ssWithin = 0;
+  validGroups.forEach(g => {
+      const groupMean = jStat.mean(g);
+      ssBetween += g.length * Math.pow(groupMean - grandMean, 2);
+      g.forEach(val => { ssWithin += Math.pow(val - groupMean, 2); });
+  });
+
+  const dfBetween = validGroups.length - 1;
+  const dfWithin = totalN - validGroups.length;
+  
+  if(dfWithin <= 0) return alert("Need more replicates to calculate variance.");
+
+  const msBetween = ssBetween / dfBetween;
+  const msWithin = ssWithin / dfWithin;
+  const fStat = msBetween / msWithin;
+  
+  const pValue = 1 - jStat.centralF.cdf(fStat, dfBetween, dfWithin);
+
+  document.getElementById('anovaResult').style.display = 'block';
+  document.getElementById('anovaTableBody').innerHTML = `
+    <tr><td>Between Treatments</td><td>${ssBetween.toFixed(2)}</td><td>${dfBetween}</td><td>${msBetween.toFixed(2)}</td><td><b>${fStat.toFixed(3)}</b></td><td><b>${pValue < 0.001 ? '<0.001' : pValue.toFixed(4)}</b></td></tr>
+    <tr><td>Within (Error)</td><td>${ssWithin.toFixed(2)}</td><td>${dfWithin}</td><td>${msWithin.toFixed(2)}</td><td></td><td></td></tr>
+    <tr><td>Total</td><td>${(ssBetween+ssWithin).toFixed(2)}</td><td>${dfBetween+dfWithin}</td><td></td><td></td><td></td></tr>
+  `;
+
+  const interp = document.getElementById('anovaInterpretation');
+  if(pValue < 0.05) {
+    interp.innerHTML = `<span style="color:#0F6E56">Result: Significant difference found</span> between treatments for ${param.toUpperCase()} during this phase (p < 0.05).`;
+  } else {
+    interp.innerHTML = `<span style="color:#854F0B">Result: No significant difference</span> between treatments for ${param.toUpperCase()} during this phase (p >= 0.05).`;
+  }
+});
+
+// -- EXCEL --
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const weeklyData = weeklyRecords.slice().sort((a,b)=> a.group - b.group || a.week - b.week).map(r=>{
+    const offered = feedOfferedForGroupWeek(r.group, r.week);
+    const t = treatmentOf(r.group);
+    const rep = replicateOf(r.group);
+    const row = { Group: r.group };
+    if(mappingValid()){ row.Treatment = 'T'+t; row.Replicate = 'R'+rep; }
+    row.Week = r.week;
+    row['Body Weight (g)'] = r.bw;
+    row['Feed Offered (g)'] = offered;
+    row['Residual Feed (g)'] = r.rfi;
+    row['Feed Intake (g)'] = Math.max(offered - r.rfi, 0);
+    return row;
+  });
+  const dailyData = dailyRecords.slice().sort((a,b)=> a.group - b.group || a.day - b.day).map(r=>{
+    const t = treatmentOf(r.group);
+    const rep = replicateOf(r.group);
+    const row = { Group: r.group };
+    if(mappingValid()){ row.Treatment = 'T'+t; row.Replicate = 'R'+rep; }
+    row.Day = r.day;
+    row['Feed Offered (g)'] = r.dfo;
+    return row;
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(weeklyData), 'Weekly Data');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(dailyData), 'Daily Feed Offered');
+
+  if(mappingValid()){
+    const summaryRows = [];
+    const prevAvgBw = {};
+    for(let w=1; w<=NUM_WEEKS; w++){
+      for(let t=1; t<=NUM_TREATMENTS; t++){
+        const recordsThisWeek = weeklyRecords.filter(r => treatmentOf(r.group) === t && r.week === w);
+        if(!recordsThisWeek.length) continue;
+        let sumBw = 0, sumFi = 0;
+        recordsThisWeek.forEach(r => {
+          sumBw += r.bw;
+          sumFi += Math.max(feedOfferedForGroupWeek(r.group, r.week) - r.rfi, 0);
+        });
+        const avgBw = sumBw / recordsThisWeek.length;
+        const avgFi = sumFi / recordsThisWeek.length;
+        const gain = avgBw - (prevAvgBw[t] || 0);
+        const fcr = gain > 0 ? (avgFi / gain) : null;
+        summaryRows.push({
+          Treatment: 'T'+t,
+          Week: w,
+          'Avg Body Weight (g)': avgBw.toFixed(1),
+          'Avg Feed Intake (g)': avgFi.toFixed(1),
+          'Avg Weight Gain (g)': gain.toFixed(1),
+          FCR: fcr ? fcr.toFixed(2) : 'NA'
+        });
+        prevAvgBw[t] = avgBw;
+      }
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryRows), 'Treatment Summary');
+  }
+
+  const safeName = currentExpName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  XLSX.writeFile(wb, `Avianlytics_${safeName}_data.xlsx`);
+});
 </script>
 <script>
   if ('serviceWorker' in navigator) {
